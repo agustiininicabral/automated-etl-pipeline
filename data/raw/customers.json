@@ -1,0 +1,7 @@
+[
+  {"customer_id": 1, "name": " Ana Perez ", "email": "ANA.PEREZ@example.com"},
+  {"customer_id": 2, "name": "Bruno Diaz", "email": "bruno.diaz@example.com"},
+  {"customer_id": 3, "name": "Carla Ruiz", "email": "carla.ruiz@example.com"},
+  {"customer_id": 4, "name": "Diego Lopez", "email": "diego.lopez@example.com"},
+  {"customer_id": 5, "name": "Elena Torres", "email": "elena.torres@example.com"}
+]
