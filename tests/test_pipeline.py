@@ -1,12 +1,14 @@
 import csv
 import json
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
 
 from etl_pipeline.pipeline import (
     extract_sources,
+    main,
     run_pipeline,
     transform_customers,
     transform_orders,
@@ -42,6 +44,16 @@ def test_customer_normalization_and_duplicate_rejection():
     assert len(rejected) == 2
 
 
+def test_customer_invalid_id_and_email_are_rejected():
+    rows = [
+        {"customer_id": 0, "name": "Zero", "email": "zero@example.com"},
+        {"customer_id": 2, "name": "Bad email", "email": "not-an-email"},
+    ]
+    accepted, rejected = transform_customers(rows)
+    assert accepted == []
+    assert len(rejected) == 2
+
+
 def test_order_validation_rejects_orphans_and_invalid_amounts():
     rows = [
         {"order_id": "1", "customer_id": "1", "order_date": "2026-01-01", "amount": "10.00", "status": "completed"},
@@ -60,10 +72,21 @@ def test_order_duplicate_business_key_is_rejected():
     assert rejected[0]["reason"] == "duplicate order_id"
 
 
+def test_order_invalid_date_and_status_are_rejected():
+    rows = [
+        {"order_id": "8", "customer_id": "1", "order_date": "not-a-date", "amount": "5", "status": "pending"},
+        {"order_id": "9", "customer_id": "1", "order_date": "2026-02-01", "amount": "5", "status": "unknown"},
+    ]
+    accepted, rejected = transform_orders(rows, {1})
+    assert accepted == []
+    assert len(rejected) == 2
+
+
 def test_pipeline_is_idempotent(tmp_path):
     output = tmp_path / "warehouse"
     run_pipeline(ROOT / "data" / "raw", output)
-    first = sqlite3.connect(output / "warehouse.sqlite").execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+    with sqlite3.connect(output / "warehouse.sqlite") as con:
+        first = con.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
     run_pipeline(ROOT / "data" / "raw", output)
     with sqlite3.connect(output / "warehouse.sqlite") as con:
         second = con.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
@@ -78,7 +101,21 @@ def test_extract_fails_for_invalid_customer_json(tmp_path):
         extract_sources(tmp_path)
 
 
+def test_extract_fails_for_empty_orders_file(tmp_path):
+    (tmp_path / "customers.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "orders.csv").write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="orders.csv is empty"):
+        extract_sources(tmp_path)
+
+
 def test_report_rejection_counts_are_consistent(tmp_path):
     report = run_pipeline(ROOT / "data" / "raw", tmp_path / "out")
     assert report["customers_accepted"] + report["rejected_records"] >= report["customers_input"]
     assert sum(report["rejection_reasons"].values()) == report["rejected_records"]
+
+
+def test_main_entrypoint_runs_with_explicit_paths(tmp_path, monkeypatch):
+    output = tmp_path / "cli-output"
+    monkeypatch.setattr(sys, "argv", ["etl-pipeline", "--input", str(ROOT / "data" / "raw"), "--output", str(output)])
+    assert main() == 0
+    assert (output / "warehouse.sqlite").exists()
